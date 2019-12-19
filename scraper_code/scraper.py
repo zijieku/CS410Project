@@ -1,19 +1,19 @@
 # Team Member:
 # * Coordinator: Zijie Ku (zijieku2)
 # * Member: Yanbin Zhang (zhang50)
-
+import time
 import requests
 import json
+import re
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+# from selenium import webdriver
+# from selenium.webdriver.chrome.options import Options
 
 
 # define API keys here
 STOCKNEWSAPI_KEY = 'h369abgt0vvwxlsqbediutienyp7raeskw5xpvhj'
 STOCKNEWSAPI_URL = 'https://stocknewsapi.com/api/v1'
-
-IEXAPI_KEY = 'pk_c9e4c01aba164dcd8970fa1b79038ca1'
 
 NEWS_SRC = {
     '24/7 Wall Street': '24/7+Wall+Street',
@@ -68,46 +68,57 @@ EXCLUDE_SRC = {
 # For the purpose of CS 410: 
 # Choose 'Free' news source
 INCLUDE_SRC = {
-    'Benzinga', 'Business Insider', 'Forbes', 'Fox Business',
-    'Investors Business Daily', 'The Motley Fool', 'Reuters',
-    'New York Times', 'Yahoo Finance', 'Zacks Investment Research',
-    'Seeking Alpha', 'The Street', 'Market Watch'
+    # 'Seeking Alpha'
+    #, 
+    'Forbes'
+    # 'Benzinga', 'Business Insider', 'Fox Business',
+    # 'Investors Business Daily', 'The Motley Fool', 'Reuters',
+    # 'New York Times', 'Yahoo Finance', 'Zacks Investment Research',
+    # 'The Street', 'Market Watch'
 }
 
-class scraper:
-    """Create an scraper object
-    """
-    def __init__(self, browser, url=''):
-        self.browser = browser
-        self.url = url
-        self.blacklist = set()
+def scrape_page_seeking_alpha(url):
+    USER_AGENT = 'Mozilla/5.0'
+    r = requests.get(url, headers={'User-Agent': USER_AGENT})
+    count = 0
+    while r.status_code == 403:
+        print('\t>> encounter throttler, try again in 10 seconds')
+        time.sleep(30)
+        r = requests.get(url, headers={'User-Agent': USER_AGENT})
+        if count > 12:
+            raise Exception('Please investigate url: [{}]'.format(url))
+        count += 1
+    soup = BeautifulSoup(r.text, 'html.parser')
+    r.cookies.clear()
+    r.close()
+    article = soup.find_all('article')
+    content = []
+    for index, el in enumerate(article):
+        content.append(el.text)
+    return ' '.join(content).strip().replace('\r', ' ').replace('\n', ' ').replace('  ', '')
 
-    def __repr__(self):
-        """Return string representation of the scraper object
-        """
-        return 'scraping url: [' + self.url + ']'
+def scrape_page_forbs(url):
+    USER_AGENT = 'Mozilla/5.0'
+    r = requests.get(url, headers={'User-Agent': USER_AGENT})
+    count = 0
+    while r.status_code == 403:
+        print('encounter throttler, try again in 10 seconds')
+        time.sleep(10)
+        r = requests.get(url, headers={'User-Agent': USER_AGENT})
+        if count > 12:
+            raise Exception('Please investigate url: [{}]'.format(url))
+        count += 1
+    soup = BeautifulSoup(r.text, 'html.parser')
+    body = soup.find_all('div', class_='body-container')
+    content = []
+    for index, el in enumerate(body):
+        content.append(el.text)
+    return process_bio(' '.join(content).strip().replace('\r', ' ').replace('\n', ' ')) 
 
-    def is_reponse_200(self):
-        try:
-            headers = {'User-Agent': ''}
-            return 200 == requests.get(self.url, headers=headers).status_code
-        except:
-            print("### Cloud not get response from [{}]".format(self.url))
-
-    def add_to_blacklist(self, bl):
-        """Add set of url to the scraper blacklist
-
-        """
-        input_type = type(bl)
-        if set == input_type:
-            self.blacklist.union(bl)
-        elif list == input_type:
-            self.backlist.union(set(bl))
-        elif str == input_type:
-            self.blacklist.add(bl)
-        else:
-            print('### Could not add {} to scraper\'s blacklist'.format(input_type))
-
+def process_bio(bio):
+    bio = bio.encode('ascii', errors='ignore').decode('utf-8')
+    bio = re.sub('\s+', ' ', bio)
+    return bio
 
 def get_top_mentioned_stocks_last30days (sector='All'):
     '''
@@ -171,6 +182,12 @@ def get_single_stock_news (ticker, today=False):
             news[ticker].append(data)
     return news
 
+def write_file (file, data):
+    with open(file, 'a+') as f:
+        f.write(data)
+        f.write('\n\n')
+
+
 if __name__ == "__main__":
 
     # create a chrome browser object
@@ -190,7 +207,51 @@ if __name__ == "__main__":
     top_stocks = get_top_mentioned_stocks_last30days(sector = 'Technology')
     print('top stocks: {}'.format(top_stocks))
     stock_news = get_stock_news(top_stocks)
+    
+    
+    ## Forbs
+    dir_0 = './0'
+    dir_1 = './1'
+    dir_2 = './2'
+
+    stock_news_content = dict()
     for sn in stock_news.items():
-        print('{} has {} news'.format(sn[0], sn[1]))
-    # print(r.json())
-    # print(r.status_code)
+        ticker = sn[0]
+        print('{} has {} news'.format(sn[0], len(sn[1])))
+        for news in sn[1]:
+            url = news['news_url']
+            # print('\t>> url: {}'.format(url))
+            news_content = scrape_page_forbs(url)
+            data = {
+                'content': news_content,
+                'sentiment': news['sentiment']
+            }
+            if ticker not in stock_news_content:
+                stock_news_content[ticker] = [data]
+            else:
+                stock_news_content[ticker].append(data)
+        print('\tcompleted scapping for {}'.format(ticker))
+            # print('\t>> news is: {}'.format(news_content[0:100]))
+
+    count_0 = count_1 = count_2 = 0;
+    for snc in stock_news_content.items():
+        ticker = snc[0]
+        for content in snc[1]:
+            # print(content)
+            file_name = ''
+            if content['sentiment'] == 0:
+                file_name = dir_0 + '/sample' + str(count_0) + '.txt'
+                count_0 += 1
+            elif content['sentiment'] == 1:
+                file_name = dir_1 + '/sample' + str(count_1) + '.txt'
+                count_1 += 1
+            else:
+                file_name = dir_2 + '/sample' + str(count_2) + '.txt'
+                count_2 += 1
+            write_file(file_name, content['content'])
+
+
+    # for sn in stock_news_content.items():
+    #     print('{}'.format(sn))
+    # for sn in stock_news.items():
+    #     print('{} has {} news'.format(sn[0], sn[1]))
