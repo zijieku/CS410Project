@@ -1,14 +1,15 @@
 # Team Member:
 # * Coordinator: Zijie Ku (zijieku2)
 # * Member: Yanbin Zhang (zhang50)
+
 import time
 import requests
 import json
 import re
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-# from selenium import webdriver
-# from selenium.webdriver.chrome.options import Options
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 
 # define API keys here
@@ -98,9 +99,14 @@ def scrape_page_seeking_alpha(url):
     return ' '.join(content).strip().replace('\r', ' ').replace('\n', ' ').replace('  ', '')
 
 def scrape_page_forbs(url):
+    ## include user agent as some website does not allow the default 'User-Agent'
+    ## another go around is to use a web proxy
+    ## Unfortunately, it's not available in certain regions
     USER_AGENT = 'Mozilla/5.0'
     r = requests.get(url, headers={'User-Agent': USER_AGENT})
     count = 0
+
+    ## exponential backoff for throttler 
     while r.status_code == 403:
         print('encounter throttler, try again in 10 seconds')
         time.sleep(10)
@@ -108,6 +114,9 @@ def scrape_page_forbs(url):
         if count > 12:
             raise Exception('Please investigate url: [{}]'.format(url))
         count += 1
+        # clears request cookie
+        request.cookies.clear()
+        request.close()
     soup = BeautifulSoup(r.text, 'html.parser')
     body = soup.find_all('div', class_='body-container')
     content = []
@@ -116,6 +125,7 @@ def scrape_page_forbs(url):
     return process_bio(' '.join(content).strip().replace('\r', ' ').replace('\n', ' ')) 
 
 def process_bio(bio):
+    ## remove white spaces in the contents
     bio = bio.encode('ascii', errors='ignore').decode('utf-8')
     bio = re.sub('\s+', ' ', bio)
     return bio
@@ -144,10 +154,10 @@ def get_top_mentioned_stocks_last30days (sector='All'):
     return top_stocks
 
 
-def get_stock_news (stocks):
+def get_stock_news (stocks, today=False):
     news = dict()
     for s in stocks:
-        news.update(get_single_stock_news(s))
+        news.update(get_single_stock_news(s, today))
     return news
 
 
@@ -155,7 +165,7 @@ def get_single_stock_news (ticker, today=False):
     '''
     Get last 30 days news for all of the tickers
     '''
-    start_date = datetime.strftime(datetime.now() - timedelta(33), '%m%d%Y')
+    start_date = datetime.strftime(datetime.now() - timedelta(63), '%m%d%Y')
     end_date = datetime.strftime(datetime.now() - timedelta(3), '%m%d%Y')
     PARAMS = {
         'date': 'today' if today else start_date + '-' + end_date,
@@ -188,32 +198,26 @@ def write_file (file, data):
         f.write('\n\n')
 
 
-if __name__ == "__main__":
+def get_browser():
+    ''' 
+    create an browser object
+    remember to close the browser object to prevent leakage and overflow
+    browser.quit()
+    '''
+    ## create a chrome browser object
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    browser = webdriver.Chrome('./chromedriver', options=chrome_options)
+    return browser
 
-    # create a chrome browser object
-    # chrome_options = Options()
-    # chrome_options.add_argument("--headless")
-    # browser = webdriver.Chrome('./chromedriver', options=chrome_options)
-    # browser.quit()
 
-    # url = STOCKNEWSAPI_URL + '/category?section=general'
-    # print(url)
-    # PARAMS = {'token': STOCKNEWSAPI_KEY, 'items': 50}
-    # r = requests.get(url=url, params=PARAMS)
-
-    # if r.status_code != 200:
-    #     raise Exception('invalid STOCKNEWS API request')
-
-    top_stocks = get_top_mentioned_stocks_last30days(sector = 'Technology')
-    print('top stocks: {}'.format(top_stocks))
-    stock_news = get_stock_news(top_stocks)
-    
-    
-    ## Forbs
+def scrape(stock_news):
+    ## creates label based on Forbs news
     dir_0 = './0'
     dir_1 = './1'
     dir_2 = './2'
 
+    ## process labels and news contents
     stock_news_content = dict()
     for sn in stock_news.items():
         ticker = sn[0]
@@ -233,7 +237,7 @@ if __name__ == "__main__":
         print('\tcompleted scapping for {}'.format(ticker))
             # print('\t>> news is: {}'.format(news_content[0:100]))
 
-    count_0 = count_1 = count_2 = 0;
+    count_0 = count_1 = count_2 = 0
     for snc in stock_news_content.items():
         ticker = snc[0]
         for content in snc[1]:
@@ -251,6 +255,57 @@ if __name__ == "__main__":
             write_file(file_name, content['content'])
 
 
+if __name__ == "__main__":
+
+    ## top stocks changes as time progresses
+    ## to make it consistent with trained model hard-code it with the top mentioned stock listed at 01:34 AM UTC
+    # top_stocks = get_top_mentioned_stocks_last30days(sector = 'Technology')
+    top_stocks = ['GOOGL', 'FB', 'UBER', 'MSFT', 'NVDA', 'INTC', 'T', 'CRM', 'AMD', 'AAPL']
+    print('top stocks: {}'.format(top_stocks))
+    
+    
+    ## Done scrapping
+    # stock_news = get_stock_news(top_stocks)
+    # scrape(stock_news)
+
+    stock_news = get_stock_news(top_stocks, today=True)
+    test_dir = './test'
+    ## process labels and news contents
+    stock_news_content = dict()
+    for sn in stock_news.items():
+        ticker = sn[0]
+        print('{} has {} news'.format(sn[0], len(sn[1])))
+        for news in sn[1]:
+            url = news['news_url']
+            print('\t>> url: {}'.format(url))
+            news_content = scrape_page_forbs(url)
+            data = {
+                'content': news_content,
+                'sentiment': news['sentiment']
+            }
+            if ticker not in stock_news_content:
+                stock_news_content[ticker] = [data]
+            else:
+                stock_news_content[ticker].append(data)
+        print('\tcompleted scapping for {}'.format(ticker))
+
+    count_0 = count_1 = count_2 = 0
+    for snc in stock_news_content.items():
+        ticker = snc[0]
+        for content in snc[1]:
+            # print(content)
+            file_name = ''
+            if content['sentiment'] == 0:
+                file_name = test_dir + '/sample' + str(count_0) + '.txt'
+                count_0 += 1
+            elif content['sentiment'] == 1:
+                file_name = test_dir + '/sample' + str(count_1) + '.txt'
+                count_1 += 1
+            else:
+                file_name = test_dir + '/sample' + str(count_2) + '.txt'
+                count_2 += 1
+            write_file(file_name, content['content'])
+    
     # for sn in stock_news_content.items():
     #     print('{}'.format(sn))
     # for sn in stock_news.items():
