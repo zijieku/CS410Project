@@ -1,12 +1,6 @@
 # Financial News Sentiment Classification & Analysis
 
-[toc]
-
----
-
 ## Project Implementation
-
-
 
 ### Team Members
 
@@ -89,11 +83,9 @@ _All_ models will be available under the `Models` section as following.
 
 
 
----
+<div style="page-break-after: always; break-after: page;"></div>
 
 ## Software Tutorial
-
-
 
 ### Setup
 
